@@ -40,6 +40,9 @@ Debugging can be a bit tricky. Some tips I have found:
 Here we have defined a convenient wrapper for a DoFn. When PTransforms are applied the `expand` method is called and passed input PCollection. When DoFns are applied the `process` method is called and passed a single record from an input PCollection. DoFns could return 0 or more outputs for 1 given input. Here you can see the allowed format for output is either a list or a single non-list object. In either case the results should be yielded.
 If any step in your pipeline fails too many times your entire pipeline will fail. You may want to keep this behaviour but most likely you just want to skip these bad samples for now and log the issue so you can re-visit it later. Beam `Metrics` allow you can use to keep track of import values, such as number of records, number of failures, etc. I've implement a simple version here that keeps track of a few different assertion errors we might see later on but you could obviously expand this.
 
+`config.py`
+Our feature specifications are defined here. You can see we've defined some scalar features as well as some sequence features (the one dimensional ones).
+
 `beam.py`: lines 138-228
 Here we format our sequence samples and also do some very simple feature engineering.
 ```python
@@ -48,10 +51,16 @@ raw_sample = {'item_number': '36904', 'item_description': 'Mccormick Vodka Pet',
 ```
 
 ### 3. Input scaling/standardization/normalization across dataset
+The preprocessing function is the most important conecpt of Tensorflow Transform. It describes a transformation of the dataset. Two types of functions are used to define preprocessing functions:
+  1. function that accepts and returns tensors
+  2. analyzers that compute a full-pass over dataset to generate constant value (e.g. mean, min, max) that can be used
+
+TF Transform provides canonical implementation on Beam with two primary `PTransforms`: `AnalyzeDataset` and `TransformDataset`, as well as the combined `AnalyzeAndTransformDataset`, which is easier to use.
+
 `main.py`: lines 112-118
 
 `beam.py`: lines 196-211
-Here we apply some simplistic scalings on some of the inputs. These transformations can involve doing a full pass over the entire dataset to compute an aggregate statistic such as min or max to scale.
+Here we apply some simplistic scalings on some of the inputs to 0 and 1. Obviously this can be much more complex but here we demonstrate how to integrate TFT into our Beam pipeline.
 
 ### 4. Split into train and validate
 `main.py`: lines 119-125
@@ -180,7 +189,7 @@ inputs = layers.concatenate([
     tf.reshape(month_lookup(month), (-1, SEQ_LEN, 2)),
     daily
     ])
-print(inputs.shapek)
+print(inputs.shape)
 
 # simple model
 lstm_model = tf.keras.models.Sequential([
@@ -251,6 +260,8 @@ feed_dict = {
 }
 results = session.run(fetch_tensors, feed_dict)
 ```
+
+Because we have a sequence model that is returning a prediction for every day, we need to chose the correct index. This is where `last_valid_day` comes in. Although this is not completely necessary in our setup, if we were predicting T+1 at every T, then the sequence indexing would be more crucial and having a "marker" in the data of which "current" index to us is quite helpful.
 
 ### 5. Save results to BigQuery
 Not demonstrated here since not all participants are assumed to have GCP set up but sample code for how to write results to BigQuery can be seen.
