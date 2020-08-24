@@ -1,11 +1,15 @@
 # Slides
-Slides can be found [here](https://docs.google.com/presentation/d/1na_3xv9eglSvKGDj_zhZxPa5CEfmQ8-rMdX1MJPDdR4/edit?usp=sharing)
+Slides can be found [here](https://docs.google.com/presentation/d/1FyuAlalH8yB6kLJCPokInPhjW4gRuWy35fuJFpTkl5I/edit?usp=sharing)
 
 # Local setup
 Install requirements as per `setup.py`
 
 # GCP setup
 When you first Google Cloud account, there will be a default project called `Quickstart` you can use. You will have to add some billing information.
+
+# Data
+We are using a small public dataset available in BigQuery: `bigquery-public-data.iowa_liquor_sales.sales`.
+If we look at the table we can see it is transactional data on liquor sales, with information about the store, vendor and the sale itself. We are primarily interested in the columns about which item was sold, how much, and details about the item itself. 
 
 # Using Beam to generate dataset (TFRecords)
 There is a small sample of the query result saved within `/data`. For running locally, this will be read in but for running on cloud query will be executed. The result of both is equivalent: a dict representing each row.
@@ -14,7 +18,7 @@ There is a small sample of the query result saved within `/data`. For running lo
 
 `--runner` determines the backend. Two options are demonstrated here, although there are more: `DirectRunner`, which will run locally and `DataFlow`, which is part of Google Cloud Platform
 
-`--staging_location` and `--temp_location` can be GCS buckets or local directories. Temporary files 
+`--staging_location` and `--temp_location` can be GCS buckets or local directories. Temporary files will be written here if necessary.
 
 `--setup_file` is required when you use external packages (as we are in this example) for when you want to run on a cloud backend so that the workers can install the correct setup.
 
@@ -69,7 +73,7 @@ It's always helpful to have a "sample" batch to debug while you build model. We 
 ## Examine TFRecords
 We can take a look at what the TFRecords look like.
 ```python
-tfrecord_pattern = 'iowa_sales/data/tfrecords/202008232054/train*.gz'
+tfrecord_pattern = 'iowa_sales/data/tfrecords/202008232251/train*.gz'
 files = tf.data.Dataset.list_files(tfrecord_pattern)
 raw_dataset = tf.data.TFRecordDataset(files, compression_type="GZIP")
 for raw_record in raw_dataset.take(3):
@@ -85,17 +89,70 @@ for parsed_record in parsed_dataset.take(3):
     print(repr(parsed_record))
 ```
 
-We will also want to apply some preprocessing to reshape the tensors to the shapes we want for our model. We also have to separate the features from the labels.
+We have to separate features from target; the expected output of model input function is a tuple of two dicts, 1st element being the features and second being target.
 ```python
-
+def _pop_target(features):
+    labels = features.pop(TARGET, {})
+    return features, labels
+split_dataset = parsed_dataset.map(_pop_target)
+for split_record in split_dataset.take(3):
+    print(repr(split_record))
 ```
 
-Finally we want to batch the dataset for training and evaluation.
+We also want to batch the dataset for training and evaluation.
 ```python
 batched_dataset = parsed_dataset.batch(10)
-for x in batched_dataset.take(1):
+for batched_record in batched_dataset.take(1):
     # this "x" is a useful sample to debug and test model code with
-    print(repr(x))
+    print(repr(batched_record))
+```
+
+Now we need to apply some preprocessing to manipulate the shapes of tensors into what we want for our model. This part can be a bit tricky as this function needs to work for batches as well as single records and the batch size for the serving function is `None`.
+Here I've done a very simple expansion of the scalar features so that they are repeated for all the time steps as well as dimension expansion on all features so that the input ultimately matches the expected `(batch, time, feature)` shape.
+```python
+# single example
+features = parsed_record
+output_features = {"valid_day": features["valid_day"]}
+# (time, 1)
+for f in ["item_id", "month", "cost", "retail", "pack_size"]:
+    if features[f].shape == ():
+        output_features[f] = tf.expand_dims(tf.tile(tf.expand_dims(features[f], 0), multiples=[SEQ_LEN]), 1)
+        rank = 1
+    # ranks don't match - could also check mode here
+    else:
+        # recommend that you use multiply instead of alternatives
+        # e.g. reshape, tile, etc. as those will often not work for serving
+        output_features[f] = tf.expand_dims(
+            tf.multiply(tf.expand_dims(features[f], 1),
+                        tf.ones(SEQ_LEN, dtype=features[f].dtype)), 2)
+        rank = 2
+for f in ["cumu_bottles_sold", "daily_bottles_sold", "total_packs_sold"]:
+    if rank == 1:
+        output_features[f] = tf.expand_dims(features[f], 1)
+    elif rank == 2:
+        output_features[f] = tf.expand_dims(features[f], 2)
+
+# batched example
+features = batched_record
+output_features = {"valid_day": features["valid_day"]}
+# (time, 1)
+for f in ["item_id", "month", "cost", "retail", "pack_size"]:
+    if features[f].shape == ():
+        output_features[f] = tf.expand_dims(tf.tile(tf.expand_dims(features[f], 0), multiples=[SEQ_LEN]), 1)
+        rank = 1
+    # ranks don't match - could also check mode here
+    else:
+        # recommend that you use multiply instead of alternatives
+        # e.g. reshape, tile, etc. as those will often not work for serving
+        output_features[f] = tf.expand_dims(
+            tf.multiply(tf.expand_dims(features[f], 1),
+                        tf.ones(SEQ_LEN, dtype=features[f].dtype)), 2)
+        rank = 2
+for f in ["cumu_bottles_sold", "daily_bottles_sold", "total_packs_sold"]:
+    if rank == 1:
+        output_features[f] = tf.expand_dims(features[f], 1)
+    elif rank == 2:
+        output_features[f] = tf.expand_dims(features[f], 2)
 ```
 
 ## Train RNN
@@ -103,11 +160,47 @@ for x in batched_dataset.take(1):
 # train and export a model using previously generated dataset
 %run iowa_sales/model.py '202008232251'
 ```
+When debugging model, it is often helpful to have a sample of the data to test with. As of TF 2.0 eager execution is default so debugging has become much easier. Generally mismatches tensor shapes are the most common errors, which is why it's very useful to test with a sample and check your shapes at every stage.
+
+### Building model
+Here we use two embeddings as a lookup for 2 categorical features: `item_id` and `month`. Embedding lookups add an extra dimension to the input tensor, so they need to be reshaped in order to be concatenated with the other inputs. The other inputs are simple numeric sequences that we concatenate to the embedding vectors.
+
+All of this is put into a simple LSTM with a dense layer with 1 output for each day. We return sequences here because we are interested in the prediction every day - not only the final day.
+```python
+month = keras.Input(shape=(SEQ_LEN, 1), name="month")
+month_lookup = layers.Embedding(12, 2, name="month_lookup")
+# shape: (batch, seq, 1, embedding) -> (batch, seq, embedding)
+print(month_lookup(month), (-1, SEQ_LEN, 2))
+print(tf.reshape(month_lookup(month), (-1, SEQ_LEN, 2)))
+
+# regular sequence feature
+daily = keras.Input(shape=(SEQ_LEN, 1), name="daily_bottles_sold")
+# shape: (batch, time, features)
+inputs = layers.concatenate([
+    tf.reshape(month_lookup(month), (-1, SEQ_LEN, 2)),
+    daily
+    ])
+print(inputs.shapek)
+
+# simple model
+lstm_model = tf.keras.models.Sequential([
+    # shape: (batch, time, features) => (batch, time, lstm_units)
+    tf.keras.layers.LSTM(32, return_sequences=True),
+    # shape: => (batch, time, outputs)
+    tf.keras.layers.Dense(units=1)
+    ])
+outputs = lstm_model(inputs)
+print(outputs.shape)
+```
+
+### Exporting model
+A serving input function needs to be provided in order to save and export model. This effectively defines the "API" of the model. The input serving function uses feature placeholders - **which should match the feature spec we used in our Beam pipeline**. Batch size should be `None` and this means that some of the preprocessing can be tricky.
 
 # Using Beam to make predictions
+Now that we have a trained model saved and exported, we can use it to serve predictions using the same Beam pipeline.
 
 ## Prediction pipeline transformations
-Having a unified training and prediction pipeline is crucial - if features were being processed differently between the two avenues then results would not be valid. Using Beam we can easily add prediction abilities to the same pipeline we just used to generate training datasets. Our example scenario is more suited to batch style inference but Beam can also perform streaming predictions.
+Having a unified training and prediction pipeline is crucial - if features were being processed differently between the two avenues then results would not be valid. Using Beam we can easily add prediction abilities to the same pipeline we just used to generate training datasets. Our example scenario is more suited to batch style inference but Beam also has the ability to use streaming data.
 
 ## Test prediction with SavedModel
 

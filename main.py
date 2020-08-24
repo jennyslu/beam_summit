@@ -42,26 +42,26 @@ if __name__ == "__main__":
         # see https://cloud.google.com/dataflow/docs/guides/specifying-exec-params for more details
         argv = [
             '--runner', 'DataflowRunner',
-            # '--project', PROJECT,
             '--staging_location', os.path.join(args.data_dir, "staging"),
             '--temp_location', os.path.join(args.data_dir, "temp"),
+            # see https://beam.apache.org/documentation/sdks/python-pipeline-dependencies/ for more details
+            '--setup_file', os.path.join(CURRENT_DIR, 'setup.py'),
+            # '--project', PROJECT,
             # see https://cloud.google.com/dataflow/docs/concepts/regional-endpoints for more details
             # '--region', REGION,
             # see https://cloud.google.com/dataflow/docs/guides/deploying-a-pipeline#dataflow-shuffle
             # '--experiments', 'shuffle_mode=service',
-            # see https://beam.apache.org/documentation/sdks/python-pipeline-dependencies/ for more details
-            '--setup_file', os.path.join(CURRENT_DIR, 'setup.py'),
         ]
-        options = PipelineOptions(flags=argv)
     else:
         logging.info('running locally on DirectRunner')
         argv = [
             '--runner', 'DirectRunner',
             '--staging_location', os.path.join(args.data_dir, "staging"),
             '--temp_location', os.path.join(args.data_dir, "temp"),
+            # see https://beam.apache.org/documentation/sdks/python-pipeline-dependencies/ for more details
             '--setup_file', os.path.join(CURRENT_DIR, 'setup.py'),
         ]
-        options = PipelineOptions(flags=argv)
+    options = PipelineOptions(flags=argv)
 
     t1 = time.time()
     with tft_beam.Context(temp_dir=options.display_data()['temp_location']):

@@ -126,6 +126,7 @@ def make_simple_rnn():
     # features to be tiled
     item_id = keras.Input(shape=(SEQ_LEN, 1), name="item_id")
     month = keras.Input(shape=(SEQ_LEN, 1), name="month")
+    # max item number is around this much
     item_lookup = layers.Embedding(999450, 10, name="item_lookup")
     month_lookup = layers.Embedding(12, 2, name="month_lookup")
     cost = keras.Input(shape=(SEQ_LEN, 1), name="cost")
