@@ -63,7 +63,10 @@ Generally speaking lambda functions that require external arguments will fail in
 %run main.py --mode 'train'
 ```
 
-#### Examine TFRecords
+# Build RNN using above dataset
+It's always helpful to have a "sample" batch to debug while you build model. We will only build a very simple one here. 
+
+## Examine TFRecords
 We can take a look at what the TFRecords look like.
 ```python
 tfrecord_pattern = 'iowa_sales/data/tfrecords/202008232054/train*.gz'
@@ -95,18 +98,29 @@ for x in batched_dataset.take(1):
     print(repr(x))
 ```
 
-# Build RNN using above dataset
-It's always helpful to have a "sample" batch to debug while you build model. We will only build a very simple one here. 
-
+## Train RNN
 ```python
 # train and export a model using previously generated dataset
 %run iowa_sales/model.py '202008232251'
 ```
 
-# Prediction pipeline transformations
+# Using Beam to make predictions
+
+## Prediction pipeline transformations
 Having a unified training and prediction pipeline is crucial - if features were being processed differently between the two avenues then results would not be valid. Using Beam we can easily add prediction abilities to the same pipeline we just used to generate training datasets. Our example scenario is more suited to batch style inference but Beam can also perform streaming predictions.
 
 ## Test prediction with SavedModel
+
+### 1. Input
+Here I've pretended that we are "on" a certain make making a prediction but in reality you would simply use the same query as training with filters for date ranges that would automatically only exist up until "now".
+
+### 2. Data preprocessing
+Exactly the same function as above.
+
+### 3. Input scaling/standardization/normalization across dataset
+Exactly the same function as above.
+
+### 4. Load SavedModel and make predictions
 Create a single sample to test predictions.
 ```python
 raw_sample = {'item_number': '68039', 'item_description': 'Baileys Original Irish Cream 100ml', 'cost': 41.76, 'retail': 62.64, 'volume_ml': 2400, 'pack_size': 4, 'year_month': '2020-07', 'dates_arr': ['2020-07-01', '2020-07-02', '2020-07-03', '2020-07-06', '2020-07-07', '2020-07-08', '2020-07-09', '2020-07-13', '2020-07-15'], 'daily_bottles_sold_arr': ['5', '2', '10', '8', '4', '8', '16', '6', '12']}
@@ -144,3 +158,6 @@ feed_dict = {
 }
 results = session.run(fetch_tensors, feed_dict)
 ```
+
+### 5. Save results to BigQuery
+Not demonstrated here since not all participants are assumed to have GCP set up but sample code for how to write results to BigQuery can be seen.

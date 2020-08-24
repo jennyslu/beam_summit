@@ -330,7 +330,7 @@ class Predict(beam.DoFn):
             }
             results = self.session.run(self.fetch_tensors, feed_dict)
             results = next(iter(results.values()))
-            return {
+            yield {
                 'item_number': inputs['item_id'],
                 'pred_date': '2020-07-16',
                 'pred_total_pack': results[0][inputs['last_valid_day']][0]
