@@ -99,7 +99,6 @@ if __name__ == "__main__":
                     | 'Read local JSON' >> beam.io.ReadFromText(
                         os.path.join(args.data_dir, 'bq_sample_predict.json'))
                     | 'Parse JSON' >> MapAndFilterErrors(json.loads)
-                    | beam.Map(print)
                 )
 
         # create sequence samples
@@ -158,7 +157,7 @@ if __name__ == "__main__":
                     model_dir=os.path.join(args.data_dir, 'models', args.model_dir)
                     ))
             )
-            _ = predictions | beam.Map(print)
+            _ = predictions | 'Print predictions' >> beam.Map(print)
             '''
             _ = (
                 predictions
